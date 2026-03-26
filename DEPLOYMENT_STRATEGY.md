@@ -1,58 +1,92 @@
-# Shopizer — CI/CD Deployment Strategy
+# Shopizer — Automated CI/CD Deployment Strategy
 
-> Fully automated pipeline: CI builds the Docker image, CD deploys it to your local machine via a self-hosted runner.
+> Fully automated: push code → merge PR → app deployed. No manual steps.
 
 ---
 
-## Architecture
+## The Big Picture
+
+```
+ Developer pushes code
+        │
+        ▼
+ ┌──────────────┐       ┌──────────────┐       ┌──────────────────────┐
+ │  Open PR     │──────▶│  CI Pipeline │──────▶│  Merge to 3.2.7     │
+ │              │       │  (automated) │       │  (manual approval)   │
+ └──────────────┘       └──────────────┘       └──────────┬───────────┘
+                                                          │
+                                                          ▼
+                                                ┌──────────────────────┐
+                                                │  CD Pipeline         │
+                                                │  (fully automated)   │
+                                                └──────────┬───────────┘
+                                                           │
+                                                           ▼
+                                                ┌──────────────────────┐
+                                                │  App live on         │
+                                                │  localhost:8080  ✅  │
+                                                └──────────────────────┘
+```
+
+---
+
+## Detailed Pipeline Flow
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                     GITHUB ACTIONS — CI (GitHub-hosted runner)               │
 │                                                                             │
-│  PR → Build (Maven) → Test → Docker Build → Save .tar → Upload Artifact    │
-└──────────────────────────────────┬──────────────────────────────────────────┘
-                                   │
-                                   │  CI passes + merged to 3.2.7
-                                   │
-                                   ▼
+│  PHASE 1: CI — Runs on GitHub's servers (GitHub-hosted runner)              │
+│  Trigger: Every PR to 3.2.7                                                │
+│                                                                             │
+│  ┌──────────┐    ┌──────────┐    ┌──────────────┐    ┌────────────────┐    │
+│  │  Build   │───▶│  Test    │───▶│  Docker      │───▶│  Save image   │    │
+│  │  Maven   │    │  Maven   │    │  Build       │    │  as artifact  │    │
+│  │  package │    │  verify  │    │  image       │    │  (.tar → zip) │    │
+│  └──────────┘    └──────────┘    └──────────────┘    └────────────────┘    │
+│                                                                             │
+│  If any step fails → PR is blocked from merging                            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                       │
+                          PR merged to 3.2.7 (triggers CD)
+                                       │
+                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                     GITHUB ACTIONS — CD (Self-hosted runner on your Mac)     │
 │                                                                             │
-│  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐  ┌──────────────────┐  │
-│  │  Download    │  │  Stop old    │  │  Load new   │  │  Run new         │  │
-│  │  artifact    │─▶│  container   │─▶│  image      │─▶│  container       │  │
-│  │  (.tar)      │  │              │  │             │  │  -p 8080:8080    │  │
-│  └─────────────┘  └──────────────┘  └─────────────┘  └───────┬──────────┘  │
-│                                                               │            │
-│                                                      ┌────────▼─────────┐  │
-│                                                      │  Health check    │  │
-│                                                      │  localhost:8080  │  │
-│                                                      └──────────────────┘  │
-└──────────────────────────────────────────────────────────────┬──────────────┘
-                                                               │
-                    Runs directly on your Mac                  │
-                                                               │
-┌──────────────────────────────────────────────────────────────▼──────────────┐
-│                              YOUR MAC                                       │
+│  PHASE 2: CD — Runs on your Mac (Self-hosted runner)                        │
+│  Trigger: CI passes + merge to 3.2.7                                        │
+│                                                                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌─────────────┐  ┌────────────────┐  │
+│  │  Download    │  │  Stop old    │  │  Load new   │  │  Start new     │  │
+│  │  image       │─▶│  container   │─▶│  image      │─▶│  container     │  │
+│  │  artifact    │  │              │  │             │  │  port 8080     │  │
+│  └──────────────┘  └──────────────┘  └─────────────┘  └───────┬────────┘  │
+│                                                               │           │
+│                                                      ┌────────▼────────┐  │
+│                                                      │  Health check   │  │
+│                                                      │  Retry 30x      │  │
+│                                                      │  until 200 OK   │  │
+│                                                      └────────┬────────┘  │
+│                                                               │           │
+│                                                      ┌────────▼────────┐  │
+│                                                      │  Cleanup old    │  │
+│                                                      │  images         │  │
+│                                                      └─────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                       │
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│  PHASE 3: RUNNING — Your Mac (Colima + Docker)                              │
 │                                                                             │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  GitHub Actions Runner (agent)                                        │  │
-│  │  - Listens for CD jobs                                                │  │
-│  │  - Executes deploy steps locally                                      │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │                        Colima VM (Linux)                              │  │
-│  │                                                                       │  │
+│  │  Colima VM                                                            │  │
 │  │  ┌───────────────────────────────────────────────────────────────┐    │  │
-│  │  │                     Docker Engine                             │    │  │
-│  │  │                                                               │    │  │
+│  │  │  Docker Engine                                                │    │  │
 │  │  │  ┌─────────────────────────────────────────────────────┐      │    │  │
 │  │  │  │  Shopizer Container                                 │      │    │  │
-│  │  │  │                                                     │      │    │  │
-│  │  │  │  Java 11 + Spring Boot                              │      │    │  │
-│  │  │  │  H2 DB (embedded)                                   │      │    │  │
+│  │  │  │  Java 11 + Spring Boot + H2 DB                      │      │    │  │
 │  │  │  │  Port: 8080                                         │      │    │  │
 │  │  │  └─────────────────────────────────────────────────────┘      │    │  │
 │  │  └───────────────────────────────────────────────────────────────┘    │  │
@@ -60,68 +94,89 @@
 │                              │                                              │
 │                              ▼                                              │
 │                 http://localhost:8080/swagger-ui.html  ✅                    │
+│                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## How It Works
+## What Happens When You Push Code
 
-### CI Pipeline (runs on GitHub's servers)
-1. You open a PR
-2. GitHub Actions builds the Java app, runs tests, builds a Docker image
-3. The image is saved as a downloadable artifact
+| Step | What | Where | Automated? |
+|------|-------|-------|------------|
+| 1 | Open PR | GitHub | You do this |
+| 2 | Build Java app | GitHub runner | ✅ Auto |
+| 3 | Run tests | GitHub runner | ✅ Auto |
+| 4 | Build Docker image | GitHub runner | ✅ Auto |
+| 5 | Save image as artifact | GitHub runner | ✅ Auto |
+| 6 | Merge PR | GitHub | You do this |
+| 7 | Download artifact | Your Mac (runner) | ✅ Auto |
+| 8 | Stop old container | Your Mac (runner) | ✅ Auto |
+| 9 | Load new image | Your Mac (runner) | ✅ Auto |
+| 10 | Start new container | Your Mac (runner) | ✅ Auto |
+| 11 | Health check | Your Mac (runner) | ✅ Auto |
+| 12 | App live on localhost:8080 | Your Mac | ✅ Done |
 
-### CD Pipeline (runs on your Mac)
-4. When CI passes and the PR is merged to `3.2.7`, the CD pipeline triggers
-5. A self-hosted runner **on your Mac** picks up the job
-6. It downloads the Docker image artifact from CI
-7. Stops the old container, loads the new image, starts a new container
-8. Runs a health check to confirm the app is up
-9. Cleans up old images
-
-**Zero manual steps after merge.** Code goes from PR → merged → running on your machine automatically.
+**You only do 2 things: open a PR and merge it. Everything else is automated.**
 
 ---
 
-## Self-Hosted Runner Setup
+## One-Time Setup
 
-Run these once on your Mac:
+### 1. Install Colima & Docker
 
 ```bash
-# 1. Go to your repo settings
-#    https://github.com/sahil-2409/shopizer/settings/actions/runners/new
+brew install colima docker
+colima start
+```
 
-# 2. Follow GitHub's instructions to download and configure the runner:
+### 2. Set Up Self-Hosted Runner
+
+Go to: https://github.com/sahil-2409/shopizer/settings/actions/runners/new
+
+```bash
 mkdir actions-runner && cd actions-runner
-curl -o actions-runner-osx-arm64-2.321.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.321.0/actions-runner-osx-arm64-2.321.0.tar.gz
+# Download runner (follow GitHub's instructions for exact version)
+curl -o actions-runner-osx-arm64-2.321.0.tar.gz -L \
+  https://github.com/actions/runner/releases/download/v2.321.0/actions-runner-osx-arm64-2.321.0.tar.gz
 tar xzf actions-runner-osx-arm64-2.321.0.tar.gz
+
+# Configure
 ./config.sh --url https://github.com/sahil-2409/shopizer --token <TOKEN_FROM_GITHUB>
 
-# 3. Start the runner
-./run.sh
-
-# Or install as a service (runs on boot):
+# Install as service (starts on boot)
 ./svc.sh install
 ./svc.sh start
 ```
 
-> Get the exact commands and token from:
-> https://github.com/sahil-2409/shopizer/settings/actions/runners/new
+### 3. Done
+
+From now on, every merge to `3.2.7` auto-deploys to your machine.
 
 ---
 
-## Prerequisites
+## Rollback
 
-Make sure these are running on your Mac before the CD pipeline triggers:
+If a bad version gets deployed:
 
 ```bash
-# Colima must be running
-colima start
+# Check available images
+docker images | grep shopizer
 
-# Self-hosted runner must be running
-cd actions-runner && ./run.sh
+# Run a previous version
+docker stop shopizer && docker rm shopizer
+docker run -d -p 8080:8080 --name shopizer shopizer:<previous-sha>
 ```
+
+---
+
+## Prerequisites Checklist
+
+Before the CD pipeline can deploy, ensure:
+
+- [x] Colima is running (`colima status`)
+- [x] Self-hosted runner is running (`cd actions-runner && ./svc.sh status`)
+- [x] Port 8080 is available
 
 ---
 
@@ -129,7 +184,7 @@ cd actions-runner && ./run.sh
 
 | Component | Cost |
 |---|---|
-| GitHub Actions CI | Free (public repos) |
-| Self-hosted runner | Free (runs on your Mac) |
+| GitHub Actions CI | Free |
+| Self-hosted runner | Free (your Mac) |
 | Colima + Docker | Free |
 | **Total** | **$0** |
