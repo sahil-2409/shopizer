@@ -1,0 +1,50 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: ['3.2.7']
+
+permissions:
+  actions: read
+
+jobs:
+  deploy:
+    name: Deploy to Local
+    runs-on: self-hosted
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    timeout-minutes: 10
+
+    steps:
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: shopizer-${{ github.event.workflow_run.head_sha }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stop existing container
+        run: docker stop shopizer && docker rm shopizer || true
+
+      - name: Load Docker image
+        run: docker load -i shopizer-image.tar
+
+      - name: Run new container
+        run: docker run -d -p 8080:8080 --name shopizer shopizer:${{ github.event.workflow_run.head_sha }}
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/swagger-ui.html > /dev/null; then
+              echo "✅ App is healthy"
+              exit 0
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 5
+          done
+          echo "❌ Health check failed"
+          exit 1
+
+      - name: Cleanup old images
+        run: docker image prune -f
