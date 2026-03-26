@@ -11,12 +11,15 @@ permissions:
 
 jobs:
   deploy:
-    name: Deploy to Local
+    name: Deploy to Local K8s
     runs-on: self-hosted
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     timeout-minutes: 10
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download Docker image artifact
         uses: actions/download-artifact@v4
         with:
@@ -24,26 +27,29 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Stop existing container
-        run: docker stop shopizer && docker rm shopizer || true
-
-      - name: Load Docker image
+      - name: Load Docker image into Colima
         run: docker load -i shopizer-image.tar
 
-      - name: Run new container
-        run: docker run -d -p 8080:8080 --name shopizer shopizer:${{ github.event.workflow_run.head_sha }}
+      - name: Deploy to Kubernetes
+        run: |
+          SHA=${{ github.event.workflow_run.head_sha }}
+          sed "s|shopizer:IMAGE_TAG|shopizer:${SHA}|g" k8s/shopizer.yaml | kubectl apply -f -
+
+      - name: Wait for rollout
+        run: kubectl rollout status deployment/shopizer-app -n shopizer --timeout=120s
 
       - name: Health check
         run: |
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:8080/swagger-ui.html > /dev/null; then
-              echo "✅ App is healthy"
+            if curl -sf http://localhost:30080/swagger-ui.html > /dev/null; then
+              echo "✅ App is healthy on localhost:30080"
               exit 0
             fi
             echo "Waiting... ($i/30)"
             sleep 5
           done
-          echo "❌ Health check failed"
+          echo "❌ Health check failed, rolling back"
+          kubectl rollout undo deployment/shopizer-app -n shopizer
           exit 1
 
       - name: Cleanup old images
