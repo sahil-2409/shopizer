@@ -5,6 +5,11 @@ on:
     workflows: ["CI"]
     types: [completed]
     branches: ['3.2.7']
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: 'Git SHA of the image to deploy'
+        required: true
 
 permissions:
   actions: read
@@ -13,18 +18,27 @@ jobs:
   deploy:
     name: Deploy to Local K8s
     runs-on: self-hosted
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     timeout-minutes: 10
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set image SHA
+        id: sha
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "sha=${{ github.event.inputs.image_sha }}" >> $GITHUB_OUTPUT
+          else
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Download Docker image artifact
         uses: actions/download-artifact@v4
         with:
-          name: shopizer-${{ github.event.workflow_run.head_sha }}
-          run-id: ${{ github.event.workflow_run.id }}
+          name: shopizer-${{ steps.sha.outputs.sha }}
+          run-id: ${{ github.event.workflow_run.id || '' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Load Docker image into Colima
@@ -32,8 +46,7 @@ jobs:
 
       - name: Deploy to Kubernetes
         run: |
-          SHA=${{ github.event.workflow_run.head_sha }}
-          sed "s|shopizer:IMAGE_TAG|shopizer:${SHA}|g" k8s/shopizer.yaml | kubectl apply -f -
+          sed "s|shopizer:IMAGE_TAG|shopizer:${{ steps.sha.outputs.sha }}|g" k8s/shopizer.yaml | kubectl apply -f -
 
       - name: Wait for rollout
         run: kubectl rollout status deployment/shopizer-app -n shopizer --timeout=120s
