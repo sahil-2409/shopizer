@@ -45,3 +45,13 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t shopizer:${{ github.sha }} ./sm-shop
+
+      - name: Save Docker image
+        run: docker save shopizer:${{ github.sha }} -o shopizer-image.tar
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shopizer-${{ github.sha }}
+          path: shopizer-image.tar
+          retention-days: 7
