@@ -39,11 +39,18 @@ echo "🐳 Building Docker image..."
 BUILD_DIR="$WORK_DIR/build"
 mkdir -p "$BUILD_DIR"
 cp "$JAR" "$BUILD_DIR/shopizer.jar"
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+cp "$REPO_DIR/sm-shop/src/main/resources/profiles/docker/database.properties" "$BUILD_DIR/"
+cp "$REPO_DIR/sm-core/src/main/resources/email.properties" "$BUILD_DIR/"
+cp "$REPO_DIR/sm-core/src/main/resources/shopizer-core.properties" "$BUILD_DIR/"
 cat <<EOF > "$BUILD_DIR/Dockerfile"
 FROM eclipse-temurin:11-jre
-RUN mkdir /opt/app
-COPY shopizer.jar /opt/app
-CMD ["java", "-jar", "/opt/app/shopizer.jar"]
+WORKDIR /opt/app
+COPY shopizer.jar .
+COPY database.properties .
+COPY email.properties .
+COPY shopizer-core.properties .
+CMD ["java", "-cp", "/opt/app:/opt/app/shopizer.jar", "org.springframework.boot.loader.JarLauncher"]
 EOF
 docker build -t shopizer:latest "$BUILD_DIR"
 
