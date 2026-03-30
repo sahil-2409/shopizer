@@ -45,15 +45,9 @@ jobs:
           path: '**/target/surefire-reports/*.xml'
           retention-days: 7
 
-      - name: Build Docker image
-        run: docker build -t shopizer:${{ github.sha }} ./sm-shop
-
-      - name: Save Docker image
-        run: docker save shopizer:${{ github.sha }} -o shopizer-image.tar
-
-      - name: Upload Docker image artifact
+      - name: Upload JAR
         uses: actions/upload-artifact@v4
         with:
           name: shopizer-${{ github.sha }}
-          path: shopizer-image.tar
+          path: sm-shop/target/shopizer.jar
           retention-days: 7
