@@ -1,6 +1,5 @@
-FROM adoptopenjdk/openjdk11-openj9:alpine
-RUN mkdir /opt/app
-RUN mkdir /files
-COPY target/shopizer.jar /opt/app
-COPY ./files /files
-CMD ["java", "-jar", "/opt/app/shopizer.jar"]
+FROM eclipse-temurin:11-jre
+WORKDIR /opt/app
+COPY target/shopizer.jar .
+COPY files /files
+CMD ["java", "-jar", "shopizer.jar"]

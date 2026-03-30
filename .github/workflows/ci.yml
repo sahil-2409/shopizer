@@ -13,6 +13,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   test:
@@ -45,9 +46,20 @@ jobs:
           path: '**/target/surefire-reports/*.xml'
           retention-days: 7
 
-      - name: Upload JAR
-        uses: actions/upload-artifact@v4
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
         with:
-          name: shopizer-${{ github.sha }}
-          path: sm-shop/target/shopizer.jar
-          retention-days: 7
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v5
+        with:
+          context: sm-shop
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
