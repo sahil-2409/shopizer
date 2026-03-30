@@ -1,6 +1,8 @@
 name: CI
 
 on:
+  push:
+    branches: ['3.2.7']
   pull_request:
     branches: [main, master, develop, '3.2.7']
   workflow_dispatch:
